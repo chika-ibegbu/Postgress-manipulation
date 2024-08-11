@@ -1,0 +1,437 @@
+select top 100* from WM_ADPEmployee
+
+/*select lastname,FirstName, Sum(cast (WorkedHours as numeric(19,2))) as smh 
+from WM_ADPShift 
+where TimecardDate between '2022-08-01' and '2022-08-11'
+group by lastname,firstname
+having Sum(cast (WorkedHours as numeric(19,2))) < 10*/
+
+
+/* SELECT
+S.FileNumber AS PositionID
+,SUM(CAST(S.WorkedHours AS float)) as WorkedHours
+,E.FileNumber
+FROM WM_ADPShift S
+LEFT JOIN WM_ADPEmployee E
+ON S.FileNumber = E.PositionID
+WHERE (S.TimecardDate BETWEEN '2022-08-10' AND '2022-08-20')
+AND S.WorkedCode in('','ADMIN')
+GROUP BY S.FileNumber,E.FileNumber*/
+
+
+---Active employee with less than 10hours worked
+
+DECLARE @START AS DATE = '2022-08-15'
+DECLARE @END AS DATE = '2022-08-15' --DATEADD(DAY,-1,GETDATE())
+
+SELECT 
+A.filenumber,
+positionID,
+HireDate, 
+A.jobTitle, 
+HomeDeptCode,
+HomeRegion,
+HomeDistrict,
+ReportsToName,
+ReportsToAssociateID,
+Sum(cast (WorkedHours as numeric(19,2))) as TimecardHrs
+FROM WM_ADPEmployee A
+join WM_ADPShift B
+ON A.positionID= B.fileNumber
+AND B.WorkedCode in('','ADMIN')
+WHERE TimecardDate between @START and @END
+GROUP BY A.filenumber,positionID,HireDate, A.jobTitle, HomeDeptCode,HomeRegion, HomeDistrict,ReportsToName,ReportsToAssociateID
+HAVING  Sum(cast (WorkedHours as numeric(19,2))) < 10 
+ORDER BY TimecardHrs DESC
+------------------------------------------------------------------------------------------------------
+SELECT top 10
+LEFT(A.FileNumber,3) 'Company Code'
+,A.LastName
+,A.FirstName
+,A.FileNumber
+,A.HomeCostNbr 'Cost Center'
+,Left(CASE WHEN ISNULL(WorkedCC,'') = '' THEN TCWorkedDeptDesc ELSE WorkedCC END,7)'Worked Department'
+,Right(WorkedCC,LEN(WorkedCC)-2)'WD'
+,TCTimeIn
+,TCTimeOut
+,WorkedHours 'Hours'
+,B.PayCode
+FROM WM_ADPSHIFT A
+left join WM_ADPScheduleShift B
+on A.FileNumber = B.FileNumber and A.StoreNumber =B.StoreNumber and A.TimecardDate= B.PayDate
+WHERE LEFT(A.FileNumber,3) IN ('S1S', 'Y3U', '6A1')
+AND B.PayCode IN ('Admin','')
+
+select top 100 * from WM_ADPShift
+select top 100 * from WM_ADPScheduleShift
+
+-------------------------------------------------------------------------------------------------------------
+
+SELECT A.AssociateID, A.TimecardDate, A.StoreNumber, SUM(CAST(A.WorkedHours AS NUMERIC (19,2))) 'WorkedHours', B.BreakHours
+,Team, District, Region
+FROM WM_ADPShift A
+
+LEFT JOIN(
+SELECT AssociateID, TimecardDate, StoreNumber, SUM(BreakHours)'BreakHours' FROM (
+SELECT CAST(DATEDIFF (MINUTE, LAG (CAST(TCTimeOut AS DATETIME),1) OVER (PARTITION BY AssociateID, StoreNumber, TimecardDate ORDER BY AssociateID, StoreNumber, CAST(TimecardDate AS DATETIME) + CAST(TCTimeIn AS Datetime)),TCTimeIn)/60.0 AS DECIMAL (19,2)) 'BreakHours'
+,* 
+FROM WM_ADPShift
+WHERE TimecardWorkCC LIKE 'WM%' 
+AND TimecardDate BETWEEN @START AND @END
+AND WorkedCode IN ('','Admin','Training')
+) A
+GROUP BY AssociateID, TimecardDate, StoreNumber
+) B
+ON A.AssociateID = B.AssociateID AND A.TimecardDate = B.TimecardDate AND CAST(A.StoreNumber AS INT) = CAST(B.StoreNumber AS INT)
+LEFT JOIN US_StoreMaster C
+ON A.StoreNumber = C.StoreNumber AND C.Program = 'WSP'
+WHERE TimecardWorkCC LIKE 'WM%' 
+AND A.TimecardDate BETWEEN @START AND @END
+AND WorkedCode IN ('','Admin','Training')
+AND (/*BreakHours <.2 OR*/ BreakHours IS NULL)
+GROUP BY A.AssociateID, A.TimecardDate, A.StoreNumber, B.BreakHours, Team, District, Region
+HAVING SUM(CAST(A.WorkedHours AS NUMERIC (19,2))) >= 5.5
+
+------------------------------------------------------------------------------------------------------------------------
+
+--SELECT TOP 100 * FROM WM_ADPShift
+--SELECT TOP 100 * FROM WM_ADPScheduleShift
+USE WMUS
+
+DECLARE @START AS DATE = '2022-01-01'
+DECLARE @END AS DATE = CAST (GETDATE()- 1 AS date)
+
+
+SELECT A.AssociateID, D.HomeDeptCode, C.StoreNumber, C.Team, C.District, C.Region,
+A.TimecardDate, SUM(CAST(A.WorkedHours AS NUMERIC (19,2))) 'WorkedHours', B.BreakMins
+
+FROM WM_ADPShift A
+
+LEFT JOIN( --DECLARE @START AS DATE = '2022-07-10'DECLARE @END AS DATE = '2022-07-16'
+
+SELECT AssociateID, TimecardDate, SUM(BreakMins)'BreakMins' FROM (
+SELECT CAST(DATEDIFF (MINUTE, LAG (CAST(TCTimeOut AS DATETIME),1) OVER (PARTITION BY AssociateID, TimecardDate ORDER BY AssociateID, CAST(TimecardDate AS DATETIME) + CAST(TCTimeIn AS Datetime)),TCTimeIn) AS DECIMAL (19,2)) 'BreakMins'
+,* 
+FROM WM_ADPShift
+WHERE TimecardWorkCC LIKE 'WM%' 
+AND TimecardDate BETWEEN @START AND @END
+AND WorkedCode IN ('','Admin','Training')
+) A
+GROUP BY AssociateID, TimecardDate
+) B
+ON A.AssociateID = B.AssociateID AND A.TimecardDate = B.TimecardDate 
+LEFT JOIN 
+(SELECT ROW_NUMBER() OVER (PARTITION BY AssociateID ORDER BY StatusEffectiveDate DESC) As 'RN',
+* FROM WM_ADPEmployee) D
+ON A.AssociateID = D.AssociateID AND D.RN = 1
+LEFT JOIN US_StoreMaster C
+ON D.HomeDeptCode = C.CostCenter
+WHERE TimecardWorkCC LIKE 'WM%' 
+AND A.TimecardDate BETWEEN @START AND @END
+AND WorkedCode IN ('','Admin','Training')
+AND (BreakMins <30 OR BreakMins IS NULL)
+GROUP BY A.AssociateID, A.TimecardDate, B.BreakMins, D.HomeDeptCode,C.StoreNumber, C.Team, C.District, C.Region
+HAVING SUM(CAST(A.WorkedHours AS NUMERIC (19,2))) >= 5.5
+
+
+--SELECT * FROM US_StoreMaster WHERE StoreNumber = 891
+
+--SELECT TOP 100* FROM WM_ADPEmployee
+--SELECT COUNT(Distinct AssociateID) FROM WM_ADPEmployee
+
+--SELECT ROW_NUMBER() OVER (PARTITION BY AssociateID ORDER BY StatusEffectiveDate DESC) As 'RN',* FROM WM_ADPEmployee
+
+----------------------------------------------------------------------------------------------------------------------------
+
+SELECT DateStamp, StoreNumber, StoreUserName, FirstName, LastName, JobTitle, Itemnumber, EquipmentName, WARPOrderID, TMO_OrderID, Qty, Operator, Register, LineType, LineStatus, TrxType, Commission, Commission_status, Carrier, EmployeeID
+FROM wus.wm_actual a1
+LEFT JOIN adp.WM_ADPEmployee a2
+ON a1.EmployeeID = RIGHT(a2.FileNumber,5)
+SELECT * FROM wus.wm_actual
+--WHERE EmployeeID IN ('50894')
+--and StoreNumber IN ('1985')
+--AND StoreUserName IN ('55784 ALINDSEY','55784ALINDSEY','OSL57784')
+--where WARPOrderID IN ('365673744')--,'2033002995') --3059NIN35121
+where TMO_OrderID IN ('115792268792405')
+--AND DateStamp between '2022-12-19' AND '2022-12-28' 
+--AND TrxType IN ('TPP')
+--AND Carrier LIKE '%T-Mobile%'	
+--AND Operator = 1980
+ORDER BY DateStamp DESC, ItemNumber;
+
+SELECT
+	FileNumber,
+	FirstName, 
+	LastName, 
+	JobTitle, 
+	PersonalEmail,
+	WorkEmail,
+	JobFunctionCode, 
+	PositiveStatus,
+	HireDate,
+	TerminationDate, 
+	HomeDeptCode, 
+	StoreNumber, 
+	Region, 
+	District, 
+	Team, 
+	TLEmployeeID, 
+	ADP_TLName, 
+	DMEmployeeID, 
+	ADP_DMName,
+	WorkEmail
+FROM adp.WM_ADPEmployee ADP1
+LEFT JOIN WUS.US_StoreMaster ST1
+ON ADP1.HomeDeptCode = ST1.CostCenter  
+WHERE FileNumber IN ('011022')
+--Team LIKE '%1602h%' AND PositiveStatus <> 'Terminated'
+--StoreNumber IN ('5410') AND PositiveStatus <> 'Terminated
+--Lastname LIKE '%WITH%' AND Firstname LIKE '%VIN%' --OR LastName LIKE '%Mink%' AND FirstName LIKE '%Jordan%'
+--OR District IN ('1503') 
+--AND PositiveStatus <> 'Terminated'
+ORDER BY FirstName desc;
+
+SELECT * FROM WUS.WM_DAILY_FEED 
+WHERE TMO_OrderID IN ('115307096575923')
+--WHERE warporderID IN ('1410960783')--,'1257811768') --,'2033002995')
+
+SELECT * FROM WUS.SC_ATT_DTR_SALES WHERE OrderInfo_OrderNumber IN ('DSI7420822')
+
+--------------------------------------------------------------------------------------------------------------------------------
+
+--SELECT TOP 100  * FROM WM_ADPScheduleShift
+--SELECT * FROM US_StoreMaster
+
+---SCHEDULE BY STORE TAB
+
+USE WMUS
+DECLARE @START AS Date = '2022-09-04'
+DECLARE @END AS Date = '2022-09-10'
+
+SELECT 
+ISNULL(A.Store,'') as Store
+,ISNULL(C.FirstName,'') as FirstName
+,ISNULL(C.LastName, '') as LastName 
+,ISNULL(A.FileNumber,'') as FileNumber -- WHEREVER POSSIBLE PICK INFORMATION FROM THE PRIMARY TABLE
+,B.SchedHrs
+,ISNULL(D.StoreNumber,'') as StoreNumber
+,D.Region
+,ISNULL(D.District,'') as District
+,ISNULL(D.Team,'') as Team
+,ISNULL(CONCAT(A.Store,A.FileNumber),'') as ID
+,ISNULL(CONCAT(C.LastName,' ',C.FirstName),'') as FullName
+,ISNULL(C.JobTitle,'') as JobTitle
+,ISNULL(A.Sunday,'')as Sunday
+,ISNULL(A.Monday,'') as Monday
+,ISNULL(A.Tuesday,'') as Tuesday
+,ISNULL(A.Wednesday,'') as Wednesday
+,ISNULL(A.Thursday,'') as Thursday
+,ISNULL(A.Friday,'') as Friday
+,ISNULL(A.Saturday,'') as Saturday
+
+FROM
+(SELECT FileNumber, Store -- GROUPED BY FILENUMBER/STORE
+, ISNULL([Sunday],'')'Sunday'
+,	ISNULL([Monday],'')'Monday'
+,	ISNULL([Tuesday],'')'Tuesday'
+,	ISNULL([Wednesday],'')'Wednesday'
+,	ISNULL([Thursday],'')'Thursday'
+,	ISNULL([Friday],'')'Friday'
+,	ISNULL([Saturday],'')'Saturday'
+FROM
+
+(--DECLARE @START AS Date = '2022-06-03' DECLARE @END AS Date = '2022-06-09'
+-- ADP SHIFTS
+SELECT 
+LEFT(CASE WHEN ISNULL(ScheduleCostCenter,'') = '' THEN HomeCostNbr ELSE ScheduleCostCenter END,6) as Store -- USE SCHEDULED CC UNLESS BLANK/NULL THEN USE HOME CC
+, FileNumber
+, DATENAME (WEEKDAY, TimeIn) 'Weekday'
+, CASE WHEN PayCode IN ('ADMIN','TRAINING','') 
+THEN CONCAT(CONVERT(VARCHAR(10), CAST(TimeIn AS TIME), 0),'-',CONVERT(VARCHAR(10), CAST(TimeOut AS TIME), 0))
+ELSE 'Off' END 'Shift'
+FROM WM_ADPScheduleShift
+WHERE
+CAST(TimeIn AS DATE) Between @START and @END
+AND LEFT(FileNumber,3) IN ('S1S', 'Y3U', '6A1') --SAME FILTER AS ADP REPORT
+) SRC
+
+PIVOT(
+MAX (Shift) FOR Weekday IN ( [Sunday],	[Monday],	[Tuesday],	[Wednesday],	[Thursday],	[Friday],	[Saturday])
+)PVT
+)A
+
+LEFT JOIN
+(
+--SUM HRS BY FILENUMBER/STORE IN SUBQUERY AND LEFT JOIN TO TABLE ABOVE. NUMBER OF RECORDS SHOULD BE THE SAME SINCE IT IS THE SAME DATA GROUPED BY THE SAME FIELDS (FILENUMBER/STORE)
+--DECLARE @START AS Date = '2022-06-03' DECLARE @END AS Date = '2022-06-09'
+SELECT 
+FileNumber
+, LEFT(CASE WHEN ISNULL(ScheduleCostCenter,'') = '' THEN HomeCostNbr ELSE ScheduleCostCenter END,6) 'Store'
+, SUM(SchedHrs)'SchedHrs'
+FROM WM_ADPscheduleshift A
+WHERE CAST(timein AS DATE) Between @START and @END
+AND LEFT(a.FileNumber,3) IN ('S1S', 'Y3U', '6A1')
+GROUP BY FileNumber , LEFT(CASE WHEN ISNULL(ScheduleCostCenter,'') = '' THEN HomeCostNbr ELSE ScheduleCostCenter END,6)
+)B
+ON A.FileNumber = B.FileNumber AND A.Store = B.Store -- JOIN BY BOTH GROUPED FIELDS TO PREVENT DOUBLE JOIN (SINCE THE GROUP WILL BE UNIQUE)
+
+LEFT JOIN 
+(SELECT *, ROW_NUMBER () OVER (PARTITION BY PositionID ORDER BY StatuseffectiveDate DESC)'RN' -- ADDING ROW NUMBER IN ORDER TO PICK THE LATEST RECORD IF THERE ARE DUPLICATE POSITION IDs
+FROM WM_ADPEmployee --WHERE PositiveStatus ='ACTIVE'
+)C
+ON A.FileNumber = C.PositionID AND C.RN = 1 -- ONLY JOIN WHERE ROW NUMBER = 1 (LATEST RECORD) TO PREVENT DOUBLE JOINING
+
+FULL JOIN
+US_StoreMaster D
+ON A.Store = LEFT(D.CostCenter,6) AND D.Program IN ('WSP', 'SC') AND StoreClosedDate IS NULL -- JOINING BY LEFT 6 DIGITS OF COST CENTER BECAUSE THE SAME STORE CAN EXIST IN DIFFERENT PROGRAMS IN US_StoreMaster
+
+--WHERE C.PositiveStatus in ('Active', 'leave')
+
+
+
+
+
+
+
+
+
+--SCHEDULE INTEGRITY TAB REPORT
+
+
+DECLARE @START AS DATE = '2022-11-27'
+DECLARE @END AS DATE = '2022-12-03' --DATEADD(DAY,-1,GETDATE())
+
+
+SELECT B.Region, B.District, B.Team, B.StoreNumber
+, CONCAT(C.LastName, ' ', C.FirstName) 'Employee'
+, A.FileNumber
+, CONCAT(A.FileNumber, MONTH(A.Date),'/',DAY(A.Date),'/',YEAR(A.Date),'TRUE') 'ID'
+, C.JobTitle
+--, C.PositiveStatus
+, A.Date
+, A.ActualHRS
+, SchedHRS
+, A.ActualHRS - A.SchedHRS 'Var'
+, ISNULL(REPLACE (REPLACE(D.SchedIn,'PM', ' PM'), 'AM', ' AM') ,'Not Scheduled')'SchedIn'
+, ISNULL(REPLACE (REPLACE(E.TimeIn,'PM', ' PM'), 'AM', ' AM'),'No Punch')'TimeIn'
+, ISNULL(REPLACE (REPLACE(CASE WHEN A.ActualHRS <5.5 THEN 'N/A' ELSE F.LunchOut END,'PM', ' PM'), 'AM', ' AM'), 'No Lunch')'LunchOut'  
+, ISNULL(REPLACE (REPLACE(CASE WHEN A.ActualHRS <5.5 THEN 'N/A' ELSE F.LunchIn END,'PM', ' PM'), 'AM', ' AM'), 'No Lunch')'LunchIn'
+, ISNULL(REPLACE (REPLACE(D.SchedOut,'PM', ' PM'), 'AM', ' AM'), 'Not Scheduled')'SchedOut'
+, ISNULL(REPLACE (REPLACE(E.TimeOut,'PM', ' PM'), 'AM', ' AM'), 'No Punch')'TimeOut'
+
+FROM 
+(
+SELECT 
+ISNULL(A.FileNumber, B.FileNumber)'FileNumber'
+, ISNULL(A.CostCenter, B.CostCenter)'CostCenter'
+, ISNULL(A.[Actual HRS],0) 'ActualHRS'
+, ISNULL(B.SchedHRS,0) 'SchedHRS'
+, ISNULL(A.TimecardDate, B.PayDate) 'Date'
+
+FROM
+(
+SELECT FileNumber, TimeCardDate, LEFT(TimecardWorkCC,6) 'CostCenter', SUM(CAST(WorkedHours AS NUMERIC(19,2)))'Actual HRS'
+FROM WM_ADPShift
+WHERE TimecardDate BETWEEN @START AND @END
+--AND LEFT(FileNumber,3) IN ('S1S', 'Y3U', '6A1')
+AND LEFT(TimecardWorkCC,2) IN ('WM', 'SC', 'AT', 'CW')
+AND WorkedCode IN ('ADMIN','TRAINING','') 
+GROUP BY FileNumber, TimeCardDate, LEFT(TimecardWorkCC,6)
+)A
+
+FULL JOIN
+
+(
+--DECLARE @PAYDATE AS DATE = DATEADD(DAY,-1,GETDATE())
+SELECT FileNumber, PayDate,
+LEFT(CASE WHEN ScheduleCostCenter = '' THEN HomeCostNbr ELSE ScheduleCostCenter END,6) 'CostCenter'
+, SUM(SchedHrs)'SchedHRS'
+FROM WM_ADPScheduleShift
+WHERE PayDate BETWEEN @START AND @END
+--AND LEFT(FileNumber,3) IN ('S1S', 'Y3U', '6A1')
+AND LEFT(CASE WHEN ScheduleCostCenter = '' THEN HomeCostNbr ELSE ScheduleCostCenter END,2) IN ('WM', 'SC', 'AT', 'CW')
+AND PayCode IN ('ADMIN','TRAINING','') 
+GROUP BY FileNumber, PayDate, LEFT(CASE WHEN ScheduleCostCenter = '' THEN HomeCostNbr ELSE ScheduleCostCenter END,6)
+)B
+
+ON A.FileNumber = B.FileNumber AND A.CostCenter = B.CostCenter AND A.TimecardDate = B.PayDate
+)A
+
+LEFT JOIN US_StoreMaster B
+ON A.CostCenter = LEFT(B.CostCenter,6)
+
+LEFT JOIN
+(
+SELECT ROW_NUMBER () OVER (PARTITION BY PositionID ORDER BY StatusEffectiveDate DESC) 'RN',* FROM WM_ADPEmployee
+) C
+ON A.FileNumber = C.PositionID AND RN = 1
+
+LEFT JOIN
+(
+SELECT FileNumber, Paydate, CONVERT(varchar,CAST(MIN(TimeIn) AS TIME),100)'SchedIn', CONVERT(varchar,CAST(MAX(TimeOut) AS TIME),100)'SchedOut' FROM WM_ADPScheduleShift
+WHERE PayDate BETWEEN @START AND @END
+AND LEFT(CASE WHEN ScheduleCostCenter = '' THEN HomeCostNbr ELSE ScheduleCostCenter END,2) IN ('WM', 'SC', 'AT', 'CW')
+AND PayCode IN ('ADMIN','TRAINING','') 
+GROUP BY FileNumber, Paydate
+) D
+ON A.FileNumber = D.FileNumber AND A.Date = D.PayDate
+
+LEFT JOIN
+(
+SELECT FileNumber, TimecardDate, CONVERT(varchar,MIN(CAST(TCTimeIn AS TIME)),100)'TimeIn', CONVERT(varchar,MAX(CAST(TCTimeOut AS TIME)),100)'TimeOut'
+FROM WM_ADPShift
+WHERE TimecardDate BETWEEN @START AND @END
+AND LEFT(TimecardWorkCC,2) IN ('WM', 'SC', 'AT', 'CW')
+AND WorkedCode IN ('ADMIN','TRAINING','') 
+GROUP BY FileNumber, TimecardDate
+) E
+ON A.FileNumber = E.FileNumber AND A.Date = E.TimecardDate
+
+LEFT JOIN
+(
+SELECT ROW_NUMBER() OVER (PARTITION BY FileNumber, TimecardDate ORDER BY BreakMins DESC)'RN',* FROM
+(SELECT CAST(DATEDIFF (MINUTE, LAG (CAST(TCTimeOut AS DATETIME),1) OVER (PARTITION BY AssociateID, TimecardDate ORDER BY AssociateID, CAST(TimecardDate AS DATETIME) + CAST(TCTimeIn AS Datetime)),TCTimeIn) AS DECIMAL (19,2)) 'BreakMins'
+,REPLACE(LAG (TCTimeOut,1) OVER (PARTITION BY AssociateID, TimecardDate ORDER BY AssociateID, CAST(TimecardDate AS DATETIME) + CAST(TCTimeIn AS Datetime)),' ','') 'LunchOut'
+,REPLACE(TCTimeIn,' ','') 'LunchIn'
+,FileNumber
+,TimecardDate
+FROM WM_ADPShift
+WHERE TimecardWorkCC LIKE 'WM%' 
+AND TimecardDate BETWEEN @START AND @END
+AND WorkedCode IN ('','Admin','Training')
+)A
+)F ON A.FileNumber = F.FileNumber AND A.Date = F.TimecardDate AND F.RN = 1 AND BreakMins IS NOT NULL
+
+WHERE C.PositiveStatus = 'Active'
+
+------------------------------------------------------------------------------------------------------------------------------
+SELECT [TimecardDate], SUM (CAST([WorkedHours] AS NUMERIC (19,2)))
+FROM WMUS..WM_ADPSHIFT WHERE isnull ([WorkedCode],'') = ''
+AND [TimecardDate] >='2022-11-01'
+GROUP BY  [TimecardDate]
+ORDER BY  [TimecardDate]
+
+------------------------------------------------------------------------------------------------------------------------------
+select StoreName
+from US_StoreMaster
+where Program in ( 'wsp','sc','')
+group by StoreName
+
+
+select top 100 * from WM_ADPScheduleShift
+select top 100 * from WM_ADPShift
+
+select top 100 * from WM_ADPShift A
+join WM_ADPScheduleShift B on  A.LastName = B.LastName
+
+----QUERY---------------------------------------------------------------------------------------------------------
+
+DECLARE @START AS DATE= '2022-08-07'
+DECLARE @END AS DATE= '2022-08-13'
+
+SELECT FILENUMBER, PAYDATE, MIN(TIMEIN), MAX(TIMEOUT)
+FROM WM_ADPScheduleShift
+WHERE PayDate BETWEEN @START AND @END 
+AND left (case when ScheduleCostCenter ='' THEN HomeCostnbr else schedulecostcenter end,2) in ('wm','sc','at','cw')
+and PayCode in ('admin','training',' ')
+GROUP BY FileNumber,PAYDATE
